@@ -1,0 +1,9 @@
+sudoku assistant
+
+not quite finished with it yet, but getting close.
+
+click on the small numbers in cells to make a decision for that cell.
+number goes red if it would leave another cell without any options.
+
+hit 's' to solve the game (if it is still solvable).
+hit backspace to undo the most recent change.
