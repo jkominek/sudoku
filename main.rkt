@@ -1,7 +1,8 @@
 #lang racket/gui
 
 (require math/array
-         future-visualizer)
+         future-visualizer
+         framework)
 
 (define possibilities (set 1 2 3 4 5 6 7 8 9))
 
@@ -15,6 +16,12 @@
 ; that array location
 (define (make-sudoku-grid)
   (array->mutable-array (make-array #(9 9) possibilities)))
+
+(define empty-grid (make-sudoku-grid))
+
+(define (empty-grid? x)
+  (equal? (mutable-array-data x)
+          (mutable-array-data empty-grid)))
 
 (define (update-grid grid _row _col val)
   (define new (mutable-array-copy grid))
@@ -118,35 +125,35 @@
     ([v (in-list values)])
     (apply update-grid (cons g v))))
 
-(define g (time (multi-update-grid
+(define g (multi-update-grid
            (make-sudoku-grid)
            '(
-             (2 1 1)
-             (2 7 3)
-             (2 9 2)
-             (3 2 6)
-             (3 5 3)
-             (3 6 9)
-             (3 8 4)
-             (3 9 7)
-             (4 4 2)
-             (4 5 7)
-             (4 7 1)
-             (5 2 8)
-             (5 4 4)
-             (5 8 7)
-             (6 3 3)
-             (6 5 5)
-             (6 6 1)
-             (6 7 6)
-             (7 1 6)
-             (7 2 2)
-             (7 5 8)
-             (7 8 9)
-             (8 1 5)
-             (8 3 8)
-             (8 9 3)
-             ))))
+             ;(2 1 1)
+             ;(2 7 3)
+             ;(2 9 2)
+             ;(3 2 6)
+             ;(3 5 3)
+             ;(3 6 9)
+             ;(3 8 4)
+             ;(3 9 7)
+             ;(4 4 2)
+             ;(4 5 7)
+             ;(4 7 1)
+             ;(5 2 8)
+             ;(5 4 4)
+             ;(5 8 7)
+             ;(6 3 3)
+             ;(6 5 5)
+             ;(6 6 1)
+             ;(6 7 6)
+             ;(7 1 6)
+             ;(7 2 2)
+             ;(7 5 8)
+             ;(7 8 9)
+             ;(8 1 5)
+             ;(8 3 8)
+             ;(8 9 3)
+             )))
 
 (define (find-minimum-choices grid)
   (define per-cell-remaining
@@ -192,8 +199,6 @@
         (done #f)))
     #t))
 
-(solved? g)
-
 (define (solve grid #:depth [depth 0])
   ;(printf "~a~n" depth)
   (let/ec solution
@@ -209,14 +214,6 @@
           (solution (solve p #:depth (add1 depth))))))
     (sudoku-error "nothing worked")
     ))
-
-;(render-grid g)
-;(render-grid
-; (time (solve g)))
-
-(define f (new frame% [label "Sudoku"] [width 384] [height 384]))
-
-(send f show #t)
 
 (define sudoku-canvas%
   (class* canvas% ()
@@ -291,17 +288,19 @@
               (+ y (* w y-frac))))
       
       (define single-digit-font
-        (make-object font% (inexact->exact (round (/ h 10)))
+        (make-object font% (max 1 (inexact->exact (round (/ h 10))))
           'default 'normal 'normal #f 'default #t))
       (define nine-digit-font
-        (make-object font% (inexact->exact (round (/ h 30)))
+        (make-object font% (max 1 (inexact->exact (round (/ h 30))))
           'default 'normal 'normal #f 'default #t))
       (send dc set-font nine-digit-font)
       (define-values (9tw _a _b _c) (send dc get-text-extent "5"))
       
       (for* ([row (in-range 0 9)]
              [col (in-range 0 9)])
-        (let ([contents (array-ref grid (vector row col))])
+        (let ([contents (if grid
+                            (array-ref grid (vector row col))
+                            '())])
           (when (= 1 (set-count contents))
             (send dc set-font single-digit-font)
             (define s (number->string (set-first contents)))
@@ -352,11 +351,68 @@
       (send canvas replace-grid
             (update-grid orig-grid row col value))
       (set! grid-history (cons (cons orig-grid orig-highlights) grid-history))
-      (send canvas on-paint))))
+      (send canvas on-paint)
+      (fixup-sub-grids)
+      )))
+
+(define f
+  (new frame%
+       [label "Sudoku"] [width 700] [height 666]))
+
+(define top-horiz-panel
+  (new panel:horizontal-dragable% [parent f]))
+
+(define left-vert-panel
+  (new panel:vertical-dragable% [parent top-horiz-panel]))
+(define right-vert-panel
+  (new panel:vertical-dragable% [parent top-horiz-panel]))
+
+(define bottom-horiz-panel
+  (new panel:horizontal-dragable% [parent f]))
+(define history-grid-panels
+  (build-vector 3 (lambda (x)
+                    (new sudoku-canvas% [parent bottom-horiz-panel]
+                         [grid #f] [highlights '()]
+                         [show-tiny? #f] 
+                         [selection-callback (lambda x (void))]
+                         [undo-callback (lambda x (void))]
+                         [solve-callback (lambda x (void))])
+                    )))
+(send bottom-horiz-panel set-percentages '(1/3 1/3 1/3))
+
+(define (replace-sub-grid pos g)
+  (let* ([grid (vector-ref history-grid-panels pos)])
+    (send grid replace-grid g '())
+    (send grid on-paint)
+    ))
+
+(define (fixup-sub-grids)
+  (let ([hist-len
+         (if (and (> (length grid-history) 0)
+                  (empty-grid? (car (last grid-history))))
+             (sub1 (length grid-history))
+             (length grid-history))])
+    (cond
+      [(> hist-len 2)
+       (replace-sub-grid 2 (car (list-ref grid-history 0)))
+       (replace-sub-grid 1 (car (list-ref grid-history 1)))
+       (replace-sub-grid 0 (car (list-ref grid-history 2)))]
+      [(= hist-len 2)
+       (replace-sub-grid 2 #f)
+       (replace-sub-grid 1 (car (list-ref grid-history 0)))
+       (replace-sub-grid 0 (car (list-ref grid-history 1)))]
+      [(= hist-len 1)
+       (replace-sub-grid 2 #f)
+       (replace-sub-grid 1 #f)
+       (replace-sub-grid 0 (car (list-ref grid-history 0)))]
+      [else
+       (replace-sub-grid 2 #f)
+       (replace-sub-grid 1 #f)
+       (replace-sub-grid 0 #f)])))
 
 (define c
   (new sudoku-canvas%
-       [parent f]
+       [parent left-vert-panel]
        [grid g]
        [highlights '()]
        [show-tiny? #t]
@@ -368,7 +424,9 @@
                 ([(list-rest (list-rest grid highlights) leftovers) grid-history])
               (set! grid-history leftovers)
               (send canvas replace-grid grid highlights)
-              (send canvas on-paint))))]
+              (send canvas on-paint)
+              (fixup-sub-grids)
+              )))]
        [solve-callback
         (lambda (canvas)
           (thread
@@ -377,7 +435,44 @@
                    [orig-highlights (send canvas get-highlights)])
                (send canvas replace-grid (solve orig-grid))
                (send canvas on-paint)
-               (set! grid-history (cons (cons orig-grid orig-highlights) grid-history))))))]
+               (set! grid-history (cons (cons orig-grid orig-highlights) grid-history))
+               (fixup-sub-grids)
+               ))))]
        ))
+
+(send bottom-horiz-panel reparent left-vert-panel)
+(send top-horiz-panel set-percentages '(4/5 1/5))
+(send left-vert-panel set-percentages '(4/5 1/5))
+
+(new button% [parent right-vert-panel]
+     [label "Undo"]
+     [callback (lambda x
+                 (when (> (length grid-history) 0)
+                   (match-let
+                       ([(list-rest (list-rest grid highlights) leftovers) grid-history])
+                     (set! grid-history leftovers)
+                     (send c replace-grid grid highlights)
+                     (send c on-paint)
+                     (fixup-sub-grids)
+                     )))])
+(new button% [parent right-vert-panel]
+     [label "Clear History"]
+     [callback (lambda x
+                 (set! grid-history '())
+                 (fixup-sub-grids))])
+(new button% [parent right-vert-panel]
+     [label "Solve"]
+     [callback (lambda x
+                 (thread
+                  (lambda ()
+                    (let ([orig-grid (send c get-grid)]
+                          [orig-highlights (send c get-highlights)])
+                      (send c replace-grid (solve orig-grid))
+                      (send c on-paint)
+                      (set! grid-history (cons (cons orig-grid orig-highlights) grid-history))
+                      (fixup-sub-grids)
+                      ))))])
+
+(send f show #t)
 
 (send c replace-grid g)
